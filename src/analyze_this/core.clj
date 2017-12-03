@@ -32,49 +32,54 @@
         branches (nth complexity-vec 2)]
     (str fname " has complexity " sum " (" nodes " nodes/" branches " branches)")))
 
-(defn first-symbol [_ form] (keyword (first form)))
+(defn first-symbol [form]
+  (keyword (first form)))
 
 (defmulti analyze #'first-symbol)
 
-(defmethod analyze :ns [ctx form ]
+(defmethod analyze :ns [form ]
   {:ns (second form)})
 
-(defmethod analyze :defn [ctx form]
+(defmethod analyze :defn [form]
   (let [nodes (count-nodes form)
         branches (count-branches form)
-        fname (str (second form))]
-    {:function {fname {:nodes nodes :branches branches :public true}}}))
+        fname (second form)]
+    {:functions {fname {:nodes nodes :branches branches :public true}}}))
 
-(defmethod analyze :defn- [ctx form]
+(defmethod analyze :defn- [form]
   (let [nodes (count-nodes form)
         branches (count-branches form)
-        fname (str (second form))]
-    {:function {fname {:nodes nodes :branches branches :public false}}}))
+        fname (second form)]
+    {:functions {fname {:nodes nodes :branches branches :public false}}}))
 
-(defmethod analyze :defmacro [ctx form]
+(defmethod analyze :defmacro [form]
   (let [nodes (count-nodes form)
         branches (count-branches form)
-        fname (str (second form))]
-    {:macro {fname {:nodes  nodes :branches branches}}}))
+        fname (second form)]
+    {:macros {fname {:nodes  nodes :branches branches}}}))
 
-(defmethod analyze :default [ctx form]
-  {:other (first form)})
+(defmethod analyze :default [form]
+  {:others (first form)})
 
 (defn analyze-file [opts r]
-  (for [form (repeatedly #(edn/read r false ::eof {}))
-        :while (not= form ::eof)]
-    (analyze {:other []
-              :functions []
-              :macros []} form)))
+  (doall (->> (repeatedly #(binding [r/*read-eval* false
+                                     r/*alias-map* identity]
+                             (r/read r false ::eof)))
+              (take-while #(not= % ::eof))
+              (map analyze)
+              (reduce (fn [acc v]
+                        (cond-> acc
+                          (:ns v) (update :ns conj (:ns v))
+                          (:macros v) (update :macros conj (:macros v))
+                          (:functions v) (update :functions conj (:functions v))
+                          (:others v) (update :others conj (:others v)))) {:others []
+                                                                           :functions []
+                                                                           :macros []}))))
 
-(defn count-complexity [directory penalty-for-branch macro-penalty & {:keys [skip]
-                                     		      :or {skip #{}}}]
-  (into {}
-  (apply concat
-         (for [path (files directory #".*\.clj" skip)]
-           (with-open [r (rt/push-back-reader (reader path))]
-             (doall
-              (analyze r)))))))
+(defn count-complexity [directory {:keys [skip] :or {skip #{}}}]
+  (for [path (files directory #".*\.clj" skip)]
+    (with-open [r (rt/push-back-reader (reader path))]
+      (println  (analyze-file {} r)))))
 
 (def default-opts {:threshold 60
      		   :branch-penalty 30
