@@ -38,7 +38,10 @@
 (defmulti analyze #'first-symbol)
 
 (defmethod analyze :ns [form ]
-  {:ns (second form)})
+  
+  {:ns {:name (second form)
+        :requires (filter identity  (mapcat (fn [f]  (when (and (seq? f) (= :require (first f)))
+                                                       (rest f))) form))}})
 
 (defmethod analyze :defn [form]
   (let [nodes (count-nodes form)
@@ -52,6 +55,12 @@
         fname (second form)]
     {:functions {fname {:nodes nodes :branches branches :public false}}}))
 
+(defmethod analyze :s/defn [form]
+  (let [nodes (count-nodes form)
+        branches (count-branches form)
+        fname (second form)]
+    {:functions {fname {:nodes nodes :branches branches :public false}}}))
+
 (defmethod analyze :defmacro [form]
   (let [nodes (count-nodes form)
         branches (count-branches form)
@@ -59,7 +68,7 @@
     {:macros {fname {:nodes  nodes :branches branches}}}))
 
 (defmethod analyze :default [form]
-  {:others (first form)})
+  {:others {(first form) 1}})
 
 (defn analyze-file [opts r]
   (doall (->> (repeatedly #(binding [r/*read-eval* false
@@ -69,22 +78,57 @@
               (map analyze)
               (reduce (fn [acc v]
                         (cond-> acc
-                          (:ns v) (update :ns conj (:ns v))
-                          (:macros v) (update :macros conj (:macros v))
-                          (:functions v) (update :functions conj (:functions v))
-                          (:others v) (update :others conj (:others v)))) {:others []
-                                                                           :functions []
-                                                                           :macros []}))))
+                          (:ns v) (assoc :ns (:ns v))
+                          (:macros v) (update :macros merge (:macros v))
+                          (:functions v) (update :functions merge (:functions v))
+                          (:others v) (update :others (partial merge-with +) (:others v))))
+                      {:others {}
+                       :functions {}
+                       :macros {}}))))
 
 (defn count-complexity [directory {:keys [skip] :or {skip #{}}}]
   (for [path (files directory #".*\.clj" skip)]
     (with-open [r (rt/push-back-reader (reader path))]
-      (println  (analyze-file {} r)))))
+      (analyze-file {} r))))
 
-(def default-opts {:threshold 60
-     		   :branch-penalty 30
-		   :macro-penalty 2
-		   :source-dir "./src"})
+(def penalty-for-branch 30)
+
+(defn complexity
+  ([fn-or-macro] (complexity fn-or-macro 1))
+  ([fn-or-macro penalty]
+   (+ (:nodes fn-or-macro)
+      (* penalty penalty-for-branch
+         (:branches fn-or-macro)))))
+
+(defn total-complexity [ns]
+  (letfn [(total [acc [_ data]] (+ acc (:complexity data)))]
+    (-> ns
+        (assoc-in  [:ns :total-complexity]  (+ (reduce total 0 (:functions ns))
+                                                 (reduce total 0 (:macros ns))
+                                                 (* 3 (count (get-in ns [:ns :requires])))))
+        (assoc-in [:ns :requires-count] (count (get-in ns [:ns :requires]) )))))
+
+(defn stats [{:keys [ns macros functions others] :as objects}]
+  (-> objects
+      (update :functions (fn [fns] fns
+                           (into {}
+                                 (map (fn [[name data]]
+                                        [name (assoc data :complexity (complexity data))])fns ))))
+      (update :macros (fn [fns] fns
+                        (into {}
+                              (map (fn [[name data]]
+                                     [name (assoc data :complexity (complexity data 2))])
+                                   fns))))
+
+      total-complexity
+      (update :ns (fn [n] (-> n (dissoc :requires))))))
+
+(defn do-math [nss]
+  (->> nss
+       (map stats)
+       (map :ns)
+       (map #(select-keys % [:name :total-complexity :requires-count]))
+       (sort-by (juxt :total-complexity :requires-count))))
 
 (defn uncomplexor
   "running complexity analysis.."
