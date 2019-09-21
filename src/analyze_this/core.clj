@@ -15,16 +15,20 @@
           :when (re-matches path-re (str path))]
       path)))
 
-(defn count-nodes [data] 
+(defn count-nodes [data]
   (if (seq? data) (+ 1 (reduce + 0 (map count-nodes data))) 1))
 
 (defn branch-form? [form]
   (contains? #{'if 'if-not 'if-let 'when 'when-not 'when-let 'when-first 'case 'cond 'condp 'cond->>} form))
 
-(defn count-branches [data] 
-  (if (seq? data) 
+(defn count-branches [data]
+  (if (seq? data)
     (reduce + 0 (map count-branches data))
-  (if (branch-form? data) 1 0)))
+    (if (branch-form? data) 1 0)))
+
+(defn count-anons [forms]
+  ;; need to count how many `fn` and `fn*` we encounter
+  0)
 
 (defn pprint-complexity [complexity-vec fname]
   (let [sum (first complexity-vec)
@@ -33,33 +37,36 @@
     (str fname " has complexity " sum " (" nodes " nodes/" branches " branches)")))
 
 (defn first-symbol [form]
-  (keyword (first form)))
+  (-> form
+      first
+      keyword
+      name
+      keyword))
 
 (defmulti analyze #'first-symbol)
 
 (defmethod analyze :ns [form ]
-  
   {:ns {:name (second form)
-        :requires (filter identity  (mapcat (fn [f]  (when (and (seq? f) (= :require (first f)))
-                                                       (rest f))) form))}})
+        :requires (filter identity
+                          (mapcat (fn [f]
+                                    (when (and (seq? f) (= :require (first f)))
+                                      (rest f))) form))}})
 
 (defmethod analyze :defn [form]
   (let [nodes (count-nodes form)
         branches (count-branches form)
-        fname (second form)]
-    {:functions {fname {:nodes nodes :branches branches :public true}}}))
+        fname (second form)
+        anonymous (count-anons form)]
+    {:functions {fname {:nodes nodes :branches branches :public true
+                        :anonymous-fns anonymous}}}))
 
 (defmethod analyze :defn- [form]
   (let [nodes (count-nodes form)
         branches (count-branches form)
-        fname (second form)]
-    {:functions {fname {:nodes nodes :branches branches :public false}}}))
-
-(defmethod analyze :s/defn [form]
-  (let [nodes (count-nodes form)
-        branches (count-branches form)
-        fname (second form)]
-    {:functions {fname {:nodes nodes :branches branches :public false}}}))
+        fname (second form)
+        anonymous (count-anons form)]
+    {:functions {fname {:nodes nodes :branches branches :public false
+                        :anonymous-fns anonymous}}}))
 
 (defmethod analyze :defmacro [form]
   (let [nodes (count-nodes form)
@@ -67,7 +74,11 @@
         fname (second form)]
     {:macros {fname {:nodes  nodes :branches branches}}}))
 
+(def forms (atom {}))
+
 (defmethod analyze :default [form]
+    (swap! forms update (first-symbol form) (fnil inc 0))
+
   {:others {(first form) 1}})
 
 (defn analyze-file [opts r]
