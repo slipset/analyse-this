@@ -88,8 +88,14 @@
 
 (defn count-complexity [directory {:keys [skip] :or {skip #{}}}]
   (for [path (files directory #".*\.clj" skip)]
-    (with-open [r (rt/push-back-reader (reader path))]
-      (analyze-file {} r))))
+    (try
+      (with-open [r (rt/push-back-reader (reader path))]
+        (analyze-file {} r))
+      (catch Exception e
+        (println "Couldn't open file" path)
+        {:other {}
+         :functions {}
+         :macros {}}))))
 
 (def penalty-for-branch 30)
 
@@ -134,17 +140,19 @@
   "running complexity analysis.."
   [project & args]
   (println "analyzing " (:name project))
-  (let [opts (merge default-opts (:uncomplexor project))
+  (let [opts (:uncomplexor project)
        threshold (:threshold opts)
        branch-penalty (:branch-penalty opts)
        macro-penalty (:macro-penalty opts)
        source-dir (:source-dir opts)
         _ (println (str "functions or macros with complexity over threshold " threshold))
-        complexity-results (count-complexity source-dir branch-penalty macro-penalty)
-	overly-complex (filter #(< threshold (first (second %))) complexity-results)]
+        complexity-results (count-complexity source-dir {})
+        #_	overly-complex #_(filter #(< threshold (first (second %))) complexity-results)]
+    (do-math complexity-results)
 	
-	(doseq [c overly-complex]
-	  (println (pprint-complexity (second c) (first c))))))
+#_	(doseq [c overly-complex]
+	  (println (pprint-complexity (second c) (first c))))
+))
 
 
 (defn -main
