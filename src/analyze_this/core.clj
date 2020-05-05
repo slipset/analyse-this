@@ -98,7 +98,7 @@
                        :macros {}}))))
 
 (defn count-complexity [directory {:keys [skip] :or {skip #{}}}]
-  (for [path (files directory #".*\.clj" skip)]
+  (for [path (files directory #".*\.clj[cs]?" skip)]
     (try
       (with-open [r (rt/push-back-reader (reader path))]
         (analyze-file {} r))
